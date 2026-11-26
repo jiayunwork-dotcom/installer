@@ -2,21 +2,27 @@
 
 __version__ = "1.1.0"
 __all__ = [
-    "install",
-    "build_install_plan",
-    "preflight_installation",
-    "InstallationConflictError",
     "ConflictError",
+    "InstallationConflictError",
+    "InstallationRollbackError",
     "PreflightConflictError",
     "PreflightError",
     "PreflightNotSupportedError",
+    "RollbackError",
+    "RollbackNotSupportedError",
+    "build_install_plan",
+    "install",
+    "preflight_installation",
 ]
 
 from installer._core import build_install_plan, install, preflight_installation
 from installer.exceptions import (
     ConflictError,
     InstallationConflictError,
+    InstallationRollbackError,
     PreflightConflictError,
     PreflightError,
     PreflightNotSupportedError,
+    RollbackError,
+    RollbackNotSupportedError,
 )

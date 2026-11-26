@@ -2,6 +2,9 @@
 
 ## Unreleased
 - Add opt-in install preflight checks and the `--preflight` CLI option for target conflicts.
+- Add opt-in failure rollback via `install(..., rollback=True)` and the `--rollback`
+  CLI option, so a failed installation undoes its files, scripts, and `RECORD`
+  without re-reading the payload into memory.
 
 ## v1.1.0 (Oct 12, 2026)
 - Add early return when there are no optimization levels to compile bytecode for (#341)

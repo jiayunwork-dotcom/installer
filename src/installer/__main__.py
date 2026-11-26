@@ -10,7 +10,9 @@ import installer
 from installer.destinations import SchemeDictionaryDestination
 from installer.exceptions import (
     InstallationConflictError,
+    InstallationRollbackError,
     PreflightNotSupportedError,
+    RollbackNotSupportedError,
 )
 from installer.preflight import PlannedTarget, check_targets
 from installer.sources import WheelFile
@@ -69,6 +71,15 @@ def _get_main_parser() -> argparse.ArgumentParser:
             "reject conflicts before creating any destination files"
         ),
     )
+    parser.add_argument(
+        "--rollback",
+        action="store_true",
+        help=(
+            "if an installation raises, undo the files, scripts, and RECORD "
+            "written by this invocation before exiting; bytecode compilation is "
+            "disabled (passing --compile-bytecode too is an error)"
+        ),
+    )
     return parser
 
 
@@ -123,6 +134,16 @@ def _main(cli_args: Sequence[str], program: str | None = None) -> None:
     elif not bytecode_levels:
         bytecode_levels = [0, 1]
 
+    if args.rollback:
+        if args.compile_bytecode:
+            parser.error(
+                "--rollback cannot be combined with --compile-bytecode: .pyc "
+                "files are written outside the rollback journal"
+            )
+        # Rollback requires bytecode compilation to be off; the documented
+        # default would otherwise turn it on.
+        bytecode_levels = []
+
     if not args.preflight:
         for wheel in args.wheel:
             with WheelFile.open(wheel) as source:
@@ -131,7 +152,7 @@ def _main(cli_args: Sequence[str], program: str | None = None) -> None:
                         validate_contents=args.validate_record == "all"
                     )
                 destination = _make_destination(source, args, bytecode_levels)
-                installer.install(source, destination, {})
+                installer.install(source, destination, {}, rollback=args.rollback)
         return
 
     # For --preflight, resolve every wheel in this CLI invocation before any
@@ -153,12 +174,19 @@ def _main(cli_args: Sequence[str], program: str | None = None) -> None:
 
     for wheel, destination in planned_installations:
         with WheelFile.open(wheel) as source:
-            installer.install(source, destination, {}, preflight=True)
+            installer.install(
+                source, destination, {}, preflight=True, rollback=args.rollback
+            )
 
 
 if __name__ == "__main__":  # pragma: no cover
     try:
         _main(sys.argv[1:], "python -m installer")
-    except (InstallationConflictError, PreflightNotSupportedError) as exc:
+    except (
+        InstallationConflictError,
+        PreflightNotSupportedError,
+        RollbackNotSupportedError,
+        InstallationRollbackError,
+    ) as exc:
         print(f"installer: error: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc

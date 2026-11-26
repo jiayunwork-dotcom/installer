@@ -8,9 +8,11 @@ from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     BinaryIO,
+    ClassVar,
     Union,
 )
 
+from installer.exceptions import RollbackNotSupportedError
 from installer.records import Hash, RecordEntry
 from installer.scripts import Script
 from installer.utils import (
@@ -36,7 +38,36 @@ class WheelDestination:
     should additionally implement :meth:`resolve_target` and
     :meth:`resolve_script_target`.  These methods must be side-effect free and return
     the same locations that the corresponding write methods will use.
+
+    Third-party destinations that want to support ``install(..., rollback=True)``
+    must set :attr:`rollback_supported` to ``True`` and route every write through
+    the target-resolution hooks, so the installer can snapshot a target before it
+    is written.  They may also override :meth:`check_rollback_supported` to
+    reject incompatible configurations up front.
     """
+
+    rollback_supported: ClassVar[bool] = False
+    """Whether this destination can uphold the ``rollback=True`` guarantee.
+
+    A destination that sets this to ``True`` promises that:
+
+    - every file, script, and ``RECORD`` write goes to the path returned by the
+      resolution hooks, and
+    - raises ordinary :class:`Exception` subclasses on write failures, so the
+      installer can undo them.
+
+    .. versionadded:: 1.2.0
+    """
+
+    def check_rollback_supported(self) -> None:
+        """Reject configurations that cannot support ``rollback=True``.
+
+        Called before any destination write.  The default implementation does
+        nothing; destinations with constraints should override it and raise
+        :class:`~installer.exceptions.RollbackNotSupportedError`.
+
+        .. versionadded:: 1.2.0
+        """
 
     def resolve_target(
         self,
@@ -183,6 +214,27 @@ class SchemeDictionaryDestination(WheelDestination):
 
     overwrite_existing: bool = False
     """Silently overwrite existing files."""
+
+    rollback_supported: ClassVar[bool] = True
+
+    def check_rollback_supported(self) -> None:
+        """Reject bytecode compilation, which writes outside the journal.
+
+        ``rollback=True`` journals each file before its payload is written.  The
+        post-install bytecode cache is generated from those files, so if a later
+        step fails, restoring or deleting the source files leaves stale ``.pyc``
+        files behind.  Rather than promise a rollback that silently omits them,
+        this destination requires bytecode compilation to be disabled.
+
+        .. versionadded:: 1.2.0
+        """
+        if self.bytecode_optimization_levels:
+            raise RollbackNotSupportedError(
+                "rollback=True cannot include post-install bytecode compilation "
+                "(.pyc files are not part of the journaled write set). "
+                "Construct SchemeDictionaryDestination with "
+                "bytecode_optimization_levels=() to use rollback."
+            )
 
     def resolve_target(
         self,

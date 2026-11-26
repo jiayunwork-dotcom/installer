@@ -11,4 +11,10 @@ This API is not finalised, and may change in a patch version.
 
 .. autoexception:: installer.InstallationConflictError
    :show-inheritance:
+
+.. autoexception:: installer.RollbackNotSupportedError
+   :show-inheritance:
+
+.. autoexception:: installer.InstallationRollbackError
+   :show-inheritance:
 ```
