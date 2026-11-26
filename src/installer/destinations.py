@@ -31,7 +31,56 @@ class WheelDestination:
 
     Subclasses provide the concrete script generation logic, as well as the RECORD file
     (re)writing.
+
+    Third-party destinations that want to support ``install(..., preflight=True)``
+    should additionally implement :meth:`resolve_target` and
+    :meth:`resolve_script_target`.  These methods must be side-effect free and return
+    the same locations that the corresponding write methods will use.
     """
+
+    def resolve_target(
+        self,
+        scheme: Scheme,
+        path: Union[str, "os.PathLike[str]"],
+    ) -> "os.PathLike[str] | str":
+        """Return the concrete target for a file write without writing it.
+
+        This is the preflight counterpart to :meth:`write_file`.  Implementations
+        must not create directories or files.
+
+        .. versionadded:: 1.2.0
+        """
+        raise NotImplementedError
+
+    def resolve_script_target(
+        self, name: str, module: str, attr: str, section: "ScriptSection"
+    ) -> tuple[Scheme, str, "os.PathLike[str] | str"]:
+        """Return ``(scheme, logical_path, concrete_target)`` for a script.
+
+        This is the preflight counterpart to :meth:`write_script`.  The default
+        assumes the logical script name is exactly ``name``; destinations whose
+        script generation adds a suffix or changes naming should override it.
+
+        .. versionadded:: 1.2.0
+        """
+        return (
+            Scheme("scripts"),
+            name,
+            self.resolve_target(Scheme("scripts"), name),
+        )
+
+    def resolve_record_target(
+        self, scheme: Scheme, record_file_path: str
+    ) -> "os.PathLike[str] | str":
+        """Return the concrete target where ``RECORD`` will be finalized.
+
+        The default assumes :meth:`finalize_installation` writes ``RECORD`` through
+        the same mapping as ordinary files.  Destinations with custom RECORD
+        handling should override this method.
+
+        .. versionadded:: 1.2.0
+        """
+        return self.resolve_target(scheme, record_file_path)
 
     def write_script(
         self, name: str, module: str, attr: str, section: "ScriptSection"
@@ -135,6 +184,14 @@ class SchemeDictionaryDestination(WheelDestination):
     overwrite_existing: bool = False
     """Silently overwrite existing files."""
 
+    def resolve_target(
+        self,
+        scheme: Scheme,
+        path: Union[str, "os.PathLike[str]"],
+    ) -> Path:
+        """Resolve a write through the scheme mapping and ``destdir``."""
+        return self._path_with_destdir(scheme, os.fspath(path))
+
     def _path_with_destdir(self, scheme: Scheme, path: str) -> Path:
         # See https://docs.python.org/3/library/zipfile.html#zipfile.Path:
         #  When handling untrusted archives,
@@ -176,7 +233,7 @@ class SchemeDictionaryDestination(WheelDestination):
         - Ensures that an existing file is not being overwritten.
         - Hashes the written content, to determine the entry in the ``RECORD`` file.
         """
-        target_path = self._path_with_destdir(scheme, path)
+        target_path = self.resolve_target(scheme, path)
         if not self.overwrite_existing and target_path.exists():
             message = f"File already exists: {target_path!s}"
             raise FileExistsError(message)
@@ -221,6 +278,21 @@ class SchemeDictionaryDestination(WheelDestination):
 
         return self.write_to_fs(scheme, path_, stream, is_executable)
 
+    def _generate_script(
+        self, name: str, module: str, attr: str, section: "ScriptSection"
+    ) -> tuple[str, bytes]:
+        """Generate a script using the single implementation used for writes."""
+        script = Script(name, module, attr, section)
+        return script.generate(self.interpreter, self.script_kind)
+
+    def resolve_script_target(
+        self, name: str, module: str, attr: str, section: "ScriptSection"
+    ) -> tuple[Scheme, str, Path]:
+        """Resolve the script name produced by :class:`~installer.scripts.Script`."""
+        script_name, _data = self._generate_script(name, module, attr, section)
+        target = self.resolve_target(Scheme("scripts"), script_name)
+        return Scheme("scripts"), script_name, target
+
     def write_script(
         self, name: str, module: str, attr: str, section: "ScriptSection"
     ) -> RecordEntry:
@@ -238,15 +310,14 @@ class SchemeDictionaryDestination(WheelDestination):
         - Uses :py:meth:`SchemeDictionaryDestination.write_to_fs` for the
           filesystem interaction.
         """
-        script = Script(name, module, attr, section)
-        script_name, data = script.generate(self.interpreter, self.script_kind)
+        script_name, data = self._generate_script(name, module, attr, section)
 
         with io.BytesIO(data) as stream:
             entry = self.write_to_fs(
                 Scheme("scripts"), script_name, stream, is_executable=True
             )
 
-            path = self._path_with_destdir(Scheme("scripts"), script_name)
+            path = self.resolve_target(Scheme("scripts"), script_name)
             mode = path.stat().st_mode
             mode |= (mode & 0o444) >> 2
             path.chmod(mode)
@@ -263,7 +334,7 @@ class SchemeDictionaryDestination(WheelDestination):
 
         import compileall
 
-        target_path = self._path_with_destdir(scheme, record.path)
+        target_path = self.resolve_target(scheme, record.path)
         dir_path_to_embed = (Path(self.scheme_dict[scheme]) / record.path).parent
 
         for level in self.bytecode_optimization_levels:

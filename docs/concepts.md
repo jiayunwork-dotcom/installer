@@ -36,3 +36,32 @@ implementations to be more powerful and flexible.
 Most of these tasks can either be delegated to utilities provided in this
 library (eg: script generation), or to the Python standard library (eg:
 generating `.pyc` files).
+
+## Preflight conflict checks
+
+`install(..., preflight=True)` first resolves every location that the
+installation will claim: wheel members after `.data` relocation, generated
+entry-point scripts, additional metadata, and the rewritten `RECORD`. It
+compares the destination-specific absolute paths, so different scheme names
+that map to the same directory are still detected. It also rejects a file
+target that would have to be a parent directory of another target.
+
+When a conflict is found, `installer.exceptions.InstallationConflictError`
+is raised before the destination creates any directory or file. The exception
+contains structured `conflicts`, and its message lists each source and
+resolved target.
+
+Path mapping belongs to the destination. `SchemeDictionaryDestination`
+implements the optional `resolve_target`, `resolve_script_target`, and
+`resolve_record_target` hooks using the same helpers as its write path.
+Third-party destinations with custom routing or script naming should implement
+those hooks to support preflight; otherwise preflight raises
+`PreflightNotSupportedError` rather than guessing paths hidden inside their
+write methods.
+
+Preflight performs an additional metadata-only pass over
+`WheelSource.get_contents()` and closes each stream without reading payload
+bytes. This preserves streaming memory use, at the cost of iterating the
+source twice when installation proceeds. `WheelSource.get_contents()` already
+documents that multiple iterations are supported and yield equivalent
+contents.

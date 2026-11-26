@@ -62,6 +62,15 @@ class WheelSource:
         return f"{self.distribution}-{self.version}.data"
 
     @property
+    def location(self) -> str | None:
+        """Best-effort location of this source, for diagnostics.
+
+        Custom sources may override this to return a wheel path, URL, or other
+        locator.  The default provides no location.
+        """
+        return None
+
+    @property
     def dist_info_filenames(self) -> list[str]:
         """Get names of all files in the dist-info directory.
 
@@ -174,10 +183,17 @@ class WheelFile(WheelSource):
 
     @classmethod
     @contextmanager
-    def open(cls, path: "os.PathLike[str]") -> Iterator["WheelFile"]:
+    def open(cls, path: "str | os.PathLike[str]") -> Iterator["WheelFile"]:
         """Create a wheelfile from a given path."""
         with zipfile.ZipFile(path) as f:
             yield cls(f)
+
+    @property
+    def location(self) -> str:
+        """Absolute filesystem path of the opened wheel."""
+        filename = self._zipfile.filename
+        assert filename is not None
+        return str(Path(filename).absolute())
 
     @cached_property
     def dist_info_dir(self) -> str:
